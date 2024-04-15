@@ -1,87 +1,74 @@
-import sqlite3
-import psycopg2
 import os
+from dataclasses import dataclass
 
 import streamlit as st
-from pydantic import BaseModel
-import streamlit_pydantic as sp
+import psycopg2
+from dotenv import load_dotenv
 
-# Connect to our database
-DB_CONFIG = os.getenv("DB_TYPE")
-if DB_CONFIG == 'PG':
-    PG_USER = os.getenv("PG_USER")
-    con = psycopg2.connect(f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/todoapp?connect_timeout=10&application_name=todoapp")
-else:
-    con = sqlite3.connect("todoapp.sqlite", isolation_level=None)
+load_dotenv()
+
+con = psycopg2.connect(os.getenv("DATABASE_URL"))
 cur = con.cursor()
 
-# Create the table
 cur.execute(
     """
-    CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        description TEXT,
-        is_done BOOLEAN
+    CREATE TABLE IF NOT EXISTS prompts (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 )
 
-# Define our Form
-class Task(BaseModel):
-    name: str
-    description: str
-    is_done: bool
+@dataclass
+class Prompt:
+    title: str
+    prompt: str
 
-# This function will be called when the check mark is toggled, this is called a callback function
-def toggle_is_done(is_done, row):
+def prompt_form(prompt=Prompt("","")):
+    """
+    TODO: Add validation to the form, so that the title and prompt are required.
+    """
+    with st.form(key="prompt_form", clear_on_submit=True):
+        #layout your fields here
+        title = st.text_input("Title", value=prompt.title)
+        prompt = st.text_area("Prompt", height=200, value=prompt.prompt)
+        submitted = st.form_submit_button("Submit")
+        if submitted:
+            return Prompt(title, prompt)
+
+st.title("Promptbase")
+st.subheader("A simple app to store and retrieve prompts")
+
+prompt = prompt_form()
+if prompt:
     cur.execute(
-        """
-        UPDATE tasks SET is_done = ? WHERE id = ?
-        """,
-        (is_done, row[0]),
+        "INSERT INTO prompts (title, prompt) VALUES (%s, %s)", (prompt.title, prompt.prompt,)
     )
+    con.commit()
+    st.success("Prompt added successfully!")
 
-def main():
-    st.title("Todo App")
+cur.execute("SELECT * FROM prompts")
+prompts = cur.fetchall()
 
-    # Create a Form using the streamlit-pydantic package, just pass it the Task Class
-    data = sp.pydantic_form(key="task_form", model=Task)
-    if data:
-        cur.execute(
-            """
-            INSERT INTO tasks (name, description, is_done) VALUES (?, ?, ?)
-            """,
-            (data.name, data.description, data.is_done),
-        )
+"""
+prompts = [
+    (1,"title1","title2",True,),-> p[0] -> id, p[1] -> "title",p[2] ->"prompt1"
+    (2,"title1","title2",True,)
+    (3,"title1","title2",True,)
+]
+"""
 
-    data = cur.execute(
-        """
-        SELECT * FROM tasks
-        """
-    ).fetchall()
-
-    # HINT: how to implement a Edit button?
-    # if st.query_params.get('id') == "123":
-    #     st.write("Hello 123")
-    #     st.markdown(
-    #         f'<a target="_self" href="/" style="display: inline-block; padding: 6px 10px; background-color: #4CAF50; color: white; text-align: center; text-decoration: none; font-size: 12px; border-radius: 4px;">Back</a>',
-    #         unsafe_allow_html=True,
-    #     )
-    #     return
-
-    cols = st.columns(3)
-    cols[0].write("Done?")
-    cols[1].write("Name")
-    cols[2].write("Description")
-    for row in data:
-        cols = st.columns(3)
-        cols[0].checkbox('is_done', row[3], label_visibility='hidden', key=row[0], on_change=toggle_is_done, args=(not row[3], row))
-        cols[1].write(row[1])
-        cols[2].write(row[2])
-        # cols[2].markdown(
-        #     f'<a target="_self" href="/?id=123" style="display: inline-block; padding: 6px 10px; background-color: #4CAF50; color: white; text-align: center; text-decoration: none; font-size: 12px; border-radius: 4px;">Action Text on Button</a>',
-        #     unsafe_allow_html=True,
-        # )
-
-main()
+# TODO: Add a search bar
+# TODO: Add a sort by date
+# TODO: Add favorite button
+for p in prompts:
+    with st.expander(p[1]):
+        st.code(p[2])
+        # TODO: Add a edit function
+        if st.button("Delete", key=p[0]):
+            cur.execute("DELETE FROM prompts WHERE id = %s", (p[0],))
+            con.commit()
+            st.rerun()
