@@ -1,3 +1,8 @@
 *.sqlite
 *.sqlite3
 *.db
+*.pyc
+_pyache_
+.env
+.DS_Store
+venv
